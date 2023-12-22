@@ -14,11 +14,18 @@ Steps:
     -- add bottleneck in layer1
     -- remove avgpool, fc layers at end (bc we only want the feature map, not a classification)
 
-2 questions:
-    1) yoshi's encoder doesn't seem to be compacting the tensor, it stays the same size. Should I change numbers and make the tensor smaller?
-        -- conversely, for the decoder you mentioned I need conv transpose layers. Should I just try something out for now?
-    2) do i add the encoder right before layer 1? aka take out a few blocks in layer1 and use the autoencoder instead?
-        -- if so, then that means the head is just conv + maxpool, then the encoder?
+Training
+1) make teacher resnet (train on imagenet dataset), then student is phsyically split resnet
+    -- phys split: train head + encoder/decoder, freeze tail
+    -- phys split: reverse the freeze, only train tail
+    -- now we have fully trained reg resnet50, and phys split resnet50
+2) now, train 2 models
+    -- time for obj det model, don't train backbone (freeze it), only obj det heads
+    -- model 1: reg obj det
+    -- model 2: obj det model + phys split backbone
+3) add early exit
+    -- determine whether we should go thru with the split (is our pred (bb + class) good enough yet?)
+    -- perform another round of knowledge distillation, train up the early exit
 """
 class ResidualBlock50(torch.nn.Module):
     def __init__(self, in_channels, out_channels, stride = 1, downsample = None):
