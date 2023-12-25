@@ -1,5 +1,5 @@
 """
-Currently on IAS lab 2019 server, ian's account
+Currently on IAS lab 2019 server, Ian's account
 Goal: train ResNet50 with physical split (bottlefit) on imageNet data
 
 path to imagenet train data: '/home/ian/dataset/1Perhold_out1/train/'
