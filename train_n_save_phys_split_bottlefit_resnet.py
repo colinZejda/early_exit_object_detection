@@ -2,72 +2,19 @@
 Currently on IAS lab 2019 server, Ian's account
 Goal: train ResNet50 with physical split (bottlefit) on imageNet data
 
-path to imagenet train data: '/home/ian/dataset/1Perhold_out1/train/'
-path to imagenet val data:   '/home/ian/dataset/1Perhold_out1/val/'
+path to imagenet train data: '/home/ian/dataset/1Per/train/'
+path to imagenet val data:   '/home/ian/dataset/1Per/val/'
 """
 
-import os
 import gc 
-import numpy as np
 from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-from torch.utils.data.sampler import SubsetRandomSampler
 
-from torchvision import datasets
-from torchvision.datasets import ImageFolder
-from torchvision import transforms
-
-from og_resnet_backbone import ResidualBlock50, ResNet
-from phys_split_resnet_backbone import encoder, decoder, ResNetHead, ResNetTail
-
-# DATA LOADER FUNC, uses Imagefolder from pytorch (for ImageNet dataset specifically)
-def data_loader(train_data_dir, validation_data_dir, batch_size, random_seed=42, valid_size=0.1, shuffle=True, test=False):
-
-    # normalize data (helps convergence during training)
-    normalize = transforms.Normalize(
-        mean=[0.4914, 0.4822, 0.4465],
-        std=[0.2023, 0.1994, 0.2010],
-    )
-
-    # define transforms
-    transform_train = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.RandomHorizontalFlip(),
-            normalize
-    ])
-
-    transform_valid = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            normalize
-    ])
-
-    # load dataset
-    train_dataset = ImageFolder(root = train_data_dir, transform = transform_train)
-    valid_dataset = ImageFolder(root = validation_data_dir, transform = transform_valid)
-
-    num_train = len(train_dataset)
-    indices = list(range(num_train))
-    split = int(np.floor(valid_size * num_train))
-
-    if shuffle:
-        np.random.seed(42)
-        np.random.shuffle(indices)
-
-    train_idx, valid_idx = indices[split:], indices[:split]
-    train_sampler = SubsetRandomSampler(train_idx)
-    valid_sampler = SubsetRandomSampler(valid_idx)
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, sampler=train_sampler, num_workers=1)
-
-    valid_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, sampler=valid_sampler, num_workers=1)
-
-    return (train_loader, valid_loader)
+from proper_imagenet_dataloaders import data_transforms, dataset, data_loader
+from resnet50 import ResidualBlock50
+from split_resnet50 import ResNetHead, ResNetTail
 
 
 # train student head + encoder/decoder, freeze tail
@@ -79,7 +26,7 @@ def first_round_training(device, train_loader, valid_loader):
     learning_rate = 1e-3
 
     # set up teacher and student models (resnet50)
-    teacher_path = '/home/ian/'          # model+architecture, no need to instantiate the class ResNet
+    teacher_path = '/home/ian/colin_early_exit_dec2023/early_exit_object_detection/teacher_model_resnet50_epoch50.pth'          # model+architecture, no need to instantiate the class ResNet
     teacher = torch.load(teacher_path).to(device)
     student_head = ResNetHead(ResidualBlock50, [3, 4, 6, 3], num_classes=num_classes).to(device)
     student_tail = ResNetTail(ResidualBlock50, [3, 4, 6, 3], num_classes=num_classes).to(device)
@@ -168,8 +115,8 @@ def second_round_training(device, train_loader, valid_loader):
     learning_rate = 1e-3
 
     # path to head+tail
-    first_stage_done_head_path = ""  # ??
-    first_stage_done_tail_path = ""
+    first_stage_done_head_path = "student_HEAD_resnet50_epoch50.pth"
+    first_stage_done_tail_path = "student_TAIL_resnet50_epoch50.pth"
 
     # instantiate student head + tail
     student_head = ResNetTail(ResidualBlock50, [3, 4, 6, 3], num_classes=num_classes).to(device)
@@ -249,19 +196,20 @@ def second_round_training(device, train_loader, valid_loader):
 
 def main():
     # create data loaders
-    path_to_imagenet = ""   # in progress, need ian's help
-    train_loader, valid_loader = data_loader(train_data_dir=path_to_imagenet+'/train',
-				                                  validation_data_dir=path_to_imagenet+'/val',
-				                                  batch_size=64)
+    path_to_imagenet = "/home/ian/dataset/1Per"                             # unsure about path?
+    train_transforms, val_transforms = data_transforms('imagenet1k_basic')   # unsure about 1k basic?
+    train_set, val_set = dataset(False, train_transforms, val_transforms, path_to_imagenet)
+    train_loader, val_loader = data_loader(False, train_set, val_set, 64)
+
     # setting CUDA, allowed to use GPU0
     gpu_id = 0
     device = f'cuda:{gpu_id}'
 
     # perform training
-    first_round_training(device, train_loader, valid_loader)      # train head + encoder/decoder, freeze tail
-    second_round_training(device, train_loader, valid_loader)     # reverse the freeze, only train tail
+    first_round_training(device, train_loader, val_loader)      # train head + encoder/decoder, freeze tail
+    second_round_training(device, train_loader, val_loader)     # reverse the freeze, only train tail
     
-    print("Fully trained Bottlefit ResNet50 saved as:", "")       # to be filled
+    print("Fully trained Bottlefit ResNet50 saved as:", "")     # to be filled
 
 if __name__ == '__main__':
     main()
