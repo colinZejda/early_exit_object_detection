@@ -5,9 +5,9 @@ from torchvision import datasets, transforms
 # from torch.utils.data.distributed import DistributedSampler  # not using distributed system here
 from torch.utils.data.sampler import SubsetRandomSampler
 
-def data_transforms(data_transforms):
+def data_transforms(data_transform_type):
     """get transform of dataset"""
-    if data_transforms in [
+    if data_transform_type in [
             'imagenet1k_basic', 'imagenet1k_inception', 'imagenet1k_mobile']:
         if data_transforms == 'imagenet1k_inception':
             mean = [0.5, 0.5, 0.5]
@@ -15,13 +15,13 @@ def data_transforms(data_transforms):
             crop_scale = 0.08
             jitter_param = 0.4
             #lighting_param = 0.1
-        elif data_transforms == 'imagenet1k_basic':
+        elif data_transform_type == 'imagenet1k_basic':
             mean = [0.485, 0.456, 0.406]
             std = [0.229, 0.224, 0.225]
             crop_scale = 0.08
             jitter_param = 0.4
             #lighting_param = 0.1
-        elif data_transforms == 'imagenet1k_mobile':
+        elif data_transform_type == 'imagenet1k_mobile':
             mean = [0.485, 0.456, 0.406]
             std = [0.229, 0.224, 0.225]
             crop_scale = 0.25
@@ -63,10 +63,8 @@ def dataset(test_only, train_transforms, val_transforms, dataset_dir):
 
 
 def data_loader(test_only, train_set, val_set, batch_size, shuffle=True, valid_size=0.1):
-    train_loader = None
-    val_loader = None
 
-    #dont worry about this part its for multi gpu work
+    # Don't worry about this part its for multi gpu work
     # infer batch size
     # if getattr(FLAGS, 'batch_size', False):
     #     if getattr(FLAGS, 'batch_size_per_gpu', False):
@@ -104,9 +102,9 @@ def data_loader(test_only, train_set, val_set, batch_size, shuffle=True, valid_s
         np.random.seed(42)
         np.random.shuffle(indices)
 
-    train_idx, valid_idx = indices[split:], indices[:split]
-    train_sampler = SubsetRandomSampler(train_idx)
-    val_sampler = SubsetRandomSampler(valid_idx)
+    #train_idx, valid_idx = indices[split:], indices[:split]
+    #train_sampler = SubsetRandomSampler(train_idx)
+    #val_sampler = SubsetRandomSampler(valid_idx)
 
     # CREATE DATA LOADERS 
     if not test_only:
@@ -117,7 +115,7 @@ def data_loader(test_only, train_set, val_set, batch_size, shuffle=True, valid_s
             sampler=train_sampler,
             pin_memory=True,
             num_workers=1,
-            drop_last=False)
+            drop_last=True)
     else:
         train_loader = None
 
@@ -128,6 +126,6 @@ def data_loader(test_only, train_set, val_set, batch_size, shuffle=True, valid_s
         sampler=val_sampler,
         pin_memory=True,
         num_workers=1,
-        drop_last=False)
+        drop_last=True)
 
     return train_loader, val_loader

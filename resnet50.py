@@ -73,9 +73,10 @@ class ResNet(torch.nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
 
-        # x = self.avgpool(x)               # no need for these, we want a backbone (just feature maps), not a classifier (10 probabilities)
-        # x = x.view(x.size(0), -1)
-        # x = self.fc(x)
+        # if not backbone:
+        x = self.avgpool(x)               # no need for these in backbone (just want feature map), not a classifier (10 probabilities)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
 
         return x
     
