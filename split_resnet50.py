@@ -95,7 +95,7 @@ class decoder(nn.Module):
         self.conv3 = nn.Conv2d(512, 512, kernel_size=2, stride=1, bias=False)
         self.b4 = nn.BatchNorm2d(512)
         # self.r4 = nn.ReLU(inplace=True)
-        self.conv4 = nn.Conv2d(512, 64, kernel_size=2, stride=1, bias=False)
+        self.conv4 = nn.Conv2d(512, 256, kernel_size=2, stride=1, bias=False)
         self.ap1 = nn.AvgPool2d(kernel_size=2, stride=1)
 
     def forward(self, x):
@@ -117,7 +117,7 @@ class decoder(nn.Module):
 ###################################################################
 
 class ResNetHead(torch.nn.Module):
-    def __init__(self, block, layers, num_classes = 10):
+    def __init__(self):
         super(ResNetHead, self).__init__()
         self.inplanes = 64
         self.conv1 = torch.nn.Sequential(
@@ -129,36 +129,39 @@ class ResNetHead(torch.nn.Module):
         
     def forward(self, x):
         x = self.conv1(x)
-        print("head after conv1", x.shape)   # torch.Size([1, 64, 112, 112])  --> batched, channels, height, we
+        # print("head after conv1", x.shape)   # torch.Size([200, 64, 112, 112])  --> batched, channels, height, we
         x = self.encoder(x)
-        print("head after encoder", x.shape) # torch.Size([1, 12, 15, 15])
+        # print("head after encoder", x.shape) # torch.Size([200, 12, 29, 29])
         x = self.mp(x)                       # maxpool after encoder, gets better compression 
-        print("head after maxpool", x.shape) # torch.Size([1, 12, 8, 8]) 
+        # print("head after maxpool", x.shape) # torch.Size([200, 12, 15, 15])
         return x
 
 ###################################################################
 
 class ResNetTail(torch.nn.Module):
-    def __init__(self, block, layers, num_classes = 10):
+    def __init__(self, block, layers):
         super(ResNetTail, self).__init__()
         self.inplanes = 64
         self.decoder = decoder()
-        self.layer2 = self._make_layer(block, 256, layers[2], stride = 2, cut_blocks=True)
+        self.layer2 = self._make_layer(block, 256, layers[2], stride = 2)
         self.layer3 = self._make_layer(block, 512, layers[3], stride = 2)
 
+        # for computing loss in 1st round of training
+        self.x      = None
+        self.l2_out = None 
+        self.l3_out = None
+
     def forward(self, x):
-        print("tail start x", x.shape)       # torch.Size([1, 12, 8, 8])
-        x = self.decoder(x)
-        print("tail after decoder", x.shape) # torch.Size([1, 512, 7, 7])
-        # x = x.view(1, 64, 1568)
-        # print("x after reshaping for L2", x.shape)    # 
-        x = self.layer2(x)
-        print("tail after L2", x.shape)      #
-        x = self.layer3(x)
-        print("tail after L3", x.shape)      #
+        # print("tail start x", x.shape)                 # torch.Size([200, 12, 15, 15])
+        self.x = self.decoder(x)
+        print("tail after decoder", self.x.shape)        # torch.Size([200, 64, 14, 14])
+        self.l2_out = self.layer2(self.x)
+        print("tail after L2", self.l2_out.shape)        # torch.Size([200, 512, 7, 7])
+        self.l3_out = self.layer3(self.l2_out)
+        print("tail after L3", self.l3_out.shape)        # torch.Size([200, 1024, 4, 4])
         return x
     
-    def _make_layer(self, block, planes, blocks, stride=1, cut_blocks=False):
+    def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes:
             
@@ -169,8 +172,7 @@ class ResNetTail(torch.nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes
-        start = 3 if cut_blocks else 1
-        for i in range(start, blocks):
+        for i in range(1, blocks):
             layers.append(block(self.inplanes, planes))
 
         return torch.nn.Sequential(*layers)

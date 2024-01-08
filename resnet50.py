@@ -33,7 +33,7 @@ class ResidualBlock50(torch.nn.Module):
         return out
 
 class ResNet(torch.nn.Module):
-    def __init__(self, block, layers, num_classes = 10):
+    def __init__(self, block, layers, num_classes = 1000):
         super(ResNet, self).__init__()
         self.inplanes = 64
         self.conv1 = torch.nn.Sequential(
@@ -65,7 +65,7 @@ class ResNet(torch.nn.Module):
 
         return torch.nn.Sequential(*layers)
     
-    def forward(self, x):
+    def forward(self, x, backbone=False):
         x = self.conv1(x)
         x = self.maxpool(x)
         # x = self.layer0(x)
@@ -73,10 +73,10 @@ class ResNet(torch.nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
 
-        # if not backbone:
-        x = self.avgpool(x)               # no need for these in backbone (just want feature map), not a classifier (10 probabilities)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        if not backbone:
+            x = self.avgpool(x)               # no need for these in backbone (just want feature map), not a classifier (10 probabilities)
+            x = x.view(x.size(0), -1)
+            x = self.fc(x)
 
         return x
     

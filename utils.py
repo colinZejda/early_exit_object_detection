@@ -12,6 +12,9 @@ import torch.optim as optim
 
 # -------------- Data Untils -------------------
 
+device = 'cuda:2'
+
+
 def parse_annotation(annotation_path, image_dir, img_size):
     '''
     Traverse the xml tree, get the annotations, and resize them to the scaled image size
@@ -63,8 +66,8 @@ def parse_annotation(annotation_path, image_dir, img_size):
 # -------------- Prepocessing utils ----------------
 
 def calc_gt_offsets(pos_anc_coords, gt_bbox_mapping):
-    pos_anc_coords = ops.box_convert(pos_anc_coords, in_fmt='xyxy', out_fmt='cxcywh')
-    gt_bbox_mapping = ops.box_convert(gt_bbox_mapping, in_fmt='xyxy', out_fmt='cxcywh')
+    pos_anc_coords = ops.box_convert(pos_anc_coords, in_fmt='xyxy', out_fmt='cxcywh').cuda(device)
+    gt_bbox_mapping = ops.box_convert(gt_bbox_mapping, in_fmt='xyxy', out_fmt='cxcywh').cuda(device)
 
     gt_cx, gt_cy, gt_w, gt_h = gt_bbox_mapping[:, 0], gt_bbox_mapping[:, 1], gt_bbox_mapping[:, 2], gt_bbox_mapping[:, 3]
     anc_cx, anc_cy, anc_w, anc_h = pos_anc_coords[:, 0], pos_anc_coords[:, 1], pos_anc_coords[:, 2], pos_anc_coords[:, 3]
@@ -108,10 +111,11 @@ def project_bboxes(bboxes, width_scale_factor, height_scale_factor, mode='a2p'):
 def generate_proposals(anchors, offsets):
    
     # change format of the anchor boxes from 'xyxy' to 'cxcywh'
-    anchors = ops.box_convert(anchors, in_fmt='xyxy', out_fmt='cxcywh')
+    anchors = ops.box_convert(anchors, in_fmt='xyxy', out_fmt='cxcywh').cuda(device)
 
     # apply offsets to anchors to create proposals
-    proposals_ = torch.zeros_like(anchors)
+    offsets = offsets.cuda(device)
+    proposals_ = torch.zeros_like(anchors).cuda(device)
     proposals_[:,0] = anchors[:,0] + offsets[:,0]*anchors[:,2]
     proposals_[:,1] = anchors[:,1] + offsets[:,1]*anchors[:,3]
     proposals_[:,2] = anchors[:,2] * torch.exp(offsets[:,2])
@@ -162,7 +166,9 @@ def get_iou_mat(batch_size, anc_boxes_all, gt_bboxes_all):
     for i in range(batch_size):
         gt_bboxes = gt_bboxes_all[i]
         anc_boxes = anc_boxes_flat[i]
-        ious_mat[i, :] = ops.box_iou(anc_boxes, gt_bboxes)
+        # print(gt_bboxes)
+        # print(anc_boxes)
+        ious_mat[i, :] = ops.box_iou(anc_boxes.cuda(device), gt_bboxes)
         
     return ious_mat
 
@@ -212,11 +218,13 @@ def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7
     # get positive anchor boxes
     
     # condition 1: the anchor box with the max iou for every gt bbox
-    positive_anc_mask = torch.logical_and(iou_mat == max_iou_per_gt_box, max_iou_per_gt_box > 0) 
+    positive_anc_mask = torch.logical_and(iou_mat == max_iou_per_gt_box, max_iou_per_gt_box > 0)
     # condition 2: anchor boxes with iou above a threshold with any of the gt bboxes
     positive_anc_mask = torch.logical_or(positive_anc_mask, iou_mat > pos_thresh)
+    # print(positive_anc_mask, positive_anc_mask.shape, positive_anc_mask == False)
     
     positive_anc_ind_sep = torch.where(positive_anc_mask)[0] # get separate indices in the batch
+    # print(positive_anc_ind_sep)
     # combine all the batches and get the idxs of the +ve anchor boxes
     positive_anc_mask = positive_anc_mask.flatten(start_dim=0, end_dim=1)
     positive_anc_ind = torch.where(positive_anc_mask)[0]
@@ -232,9 +240,10 @@ def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7
     # get gt classes of the +ve anchor boxes
     
     # expand gt classes to map against every anchor box
+    # print(gt_classes_all.shape)
     gt_classes_expand = gt_classes_all.view(B, 1, N).expand(B, tot_anc_boxes, N)
     # for every anchor box, consider only the class of the gt bbox it overlaps with the most
-    GT_class = torch.gather(gt_classes_expand, -1, max_iou_per_anc_ind.unsqueeze(-1)).squeeze(-1)
+    GT_class = torch.gather(gt_classes_expand.cuda(device), -1, max_iou_per_anc_ind.cuda(device).unsqueeze(-1)).squeeze(-1)
     # combine all the batches and get the mapped classes of the +ve anchor boxes
     GT_class = GT_class.flatten(start_dim=0, end_dim=1)
     GT_class_pos = GT_class[positive_anc_ind]
@@ -244,7 +253,7 @@ def get_req_anchors(anc_boxes_all, gt_bboxes_all, gt_classes_all, pos_thresh=0.7
     # expand all the gt bboxes to map against every anchor box
     gt_bboxes_expand = gt_bboxes_all.view(B, 1, N, 4).expand(B, tot_anc_boxes, N, 4)
     # for every anchor box, consider only the coordinates of the gt bbox it overlaps with the most
-    GT_bboxes = torch.gather(gt_bboxes_expand, -2, max_iou_per_anc_ind.reshape(B, tot_anc_boxes, 1, 1).repeat(1, 1, 1, 4))
+    GT_bboxes = torch.gather(gt_bboxes_expand.cuda(device), -2, max_iou_per_anc_ind.cuda(device).reshape(B, tot_anc_boxes, 1, 1).repeat(1, 1, 1, 4))
     # combine all the batches and get the mapped gt bbox coordinates of the +ve anchor boxes
     GT_bboxes = GT_bboxes.flatten(start_dim=0, end_dim=2)
     GT_bboxes_pos = GT_bboxes[positive_anc_ind]

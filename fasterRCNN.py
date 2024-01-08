@@ -85,8 +85,9 @@ class RegionProposalNetwork(nn.Module):
         self.proposal_module = ProposalModule(out_channels, n_anchors=self.n_anc_boxes)
         
     def forward(self, images, gt_bboxes, gt_classes):
+        # print(gt_bboxes)
+        # print(gt_classes)
         batch_size = images.size(dim=0)
-        feature_map = self.feature_extractor(images)
         
         # generate anchors
         anc_pts_x, anc_pts_y = gen_anc_centers(out_size=(self.out_h, self.out_w))
@@ -95,12 +96,17 @@ class RegionProposalNetwork(nn.Module):
         
         # get positive and negative anchors amongst other things
         gt_bboxes_proj = project_bboxes(gt_bboxes, self.width_scale_factor, self.height_scale_factor, mode='p2a')
+        # print(gt_bboxes)
         
         positive_anc_ind, negative_anc_ind, GT_conf_scores, \
         GT_offsets, GT_class_pos, positive_anc_coords, \
         negative_anc_coords, positive_anc_ind_sep = get_req_anchors(anc_boxes_all, gt_bboxes_proj, gt_classes)
+        #print(positive_anc_ind_sep.size()[0]==0)
+        # if positive_anc_ind_sep.size()[0] == 0:
+        #     return 0, 0, 0, 0, 0
         
         # pass through the proposal module
+        feature_map = self.feature_extractor(images)
         conf_scores_pos, conf_scores_neg, offsets_pos, proposals = self.proposal_module(feature_map, positive_anc_ind, \
                                                                                         negative_anc_ind, positive_anc_coords)
         
@@ -168,8 +174,14 @@ class ClassificationModule(nn.Module):
         else:
             mode = 'train'
         
+        # print('feature-s:', feature_map.shape)
+        # print('props:', proposals_list)
+
         # apply roi pooling on proposals followed by avg pooling
         roi_out = ops.roi_pool(feature_map, proposals_list, self.roi_size)
+        # print('roi-s:', roi_out.shape)
+        # if roi_out.shape[0] == 0:
+        #     print('roi:', roi_out)
         roi_out = self.avg_pool(roi_out)
         
         # flatten the output
@@ -185,6 +197,7 @@ class ClassificationModule(nn.Module):
         if mode == 'eval':
             return cls_scores
         
+        # print(cls_scores.shape, gt_classes.shape)
         # compute cross entropy loss
         cls_loss = F.cross_entropy(cls_scores, gt_classes.long())
         
@@ -199,6 +212,12 @@ class TwoStageDetector(nn.Module):
     def forward(self, images, gt_bboxes, gt_classes):
         total_rpn_loss, feature_map, proposals, \
         positive_anc_ind_sep, GT_class_pos = self.rpn(images, gt_bboxes, gt_classes)
+        # print(total_rpn_loss)
+        # if not torch.is_tensor(total_rpn_loss): #and not torch.is_tensor(feature_map) and not torch.is_tensor(proposals) and not torch.is_tensor(positive_anc_ind_sep) and not torch.is_tensor(GT_class_pos):
+        #     return -9999
+        
+        # print(positive_anc_ind_sep)
+        # print(proposals)
         
         # get separate proposals for each sample
         pos_proposals_list = []
@@ -208,6 +227,8 @@ class TwoStageDetector(nn.Module):
             proposals_sep = proposals[proposal_idxs].detach().clone()
             pos_proposals_list.append(proposals_sep)
         
+        # print(pos_proposals_list)
+
         cls_loss = self.classifier(feature_map, pos_proposals_list, GT_class_pos)
         total_loss = cls_loss + total_rpn_loss
         

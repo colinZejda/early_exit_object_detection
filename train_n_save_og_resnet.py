@@ -11,7 +11,7 @@ def train_n_save(device, train_loader, val_loader):
     # Setting Hyperparameters
     num_classes = 1000           # for full imagenet class (for 1% it's 100 classes)
     num_epochs = 100
-    batch_size = 128
+    batch_size = 200
     learning_rate = 1e-3
 
     # instantiate model
@@ -38,9 +38,9 @@ def train_n_save(device, train_loader, val_loader):
             loss_acumm += loss.item()
 
             # backprop
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
 
             del images, labels, y_hat
             torch.cuda.empty_cache()
@@ -50,7 +50,7 @@ def train_n_save(device, train_loader, val_loader):
         if (epoch+1) % 10 == 0 or epoch+1 == num_epochs:
             path_to_save_resnet = f"best_acc_original_resnet50_epoch{epoch+1}.pth"
             torch.save(best_model_found.state_dict(), path_to_save_resnet)               # to load: model.load_state_dict(torch.load(path_to_save)), after creating instance of object, model
-            print(f"Model on epoch {epoch+1} saved!!!!\n")
+            print(f"Best model on epoch {epoch+1} saved!!!!\n")
 
         # Train loss
         print('Epoch [{}/{}], Loss: {:.4f}'
@@ -60,7 +60,7 @@ def train_n_save(device, train_loader, val_loader):
         total_val_imgs = len(val_loader) * batch_size
         with torch.no_grad():
             num_correct = 0
-            for images, labels, _ in tqdm(val_loader):            # loop over all batches
+            for images, labels, _ in tqdm(val_loader):   # loop over all batches
                 images = images.to(device)
                 labels = labels.to(device)
 
@@ -82,7 +82,7 @@ def main():
     train_transforms, val_transforms = data_transforms('imagenet1k_basic')   # unsure about 1k basic?
     train_set, val_set = dataset(False, train_transforms, val_transforms, path_to_imagenet)
     
-    batch_size = 128
+    batch_size = 200
     train_loader, val_loader = data_loader(False, train_set, val_set, batch_size)
 
     # setting CUDA, allowed to use GPU0
