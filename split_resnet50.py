@@ -86,17 +86,17 @@ class decoder(nn.Module):
         super(decoder, self).__init__()
         self.b1 = nn.BatchNorm2d(bottleneck_channel)
         # self.r1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv2d(bottleneck_channel, 512, kernel_size=2, stride=1, padding=1, bias=False)
+        self.conv1 = nn.ConvTranspose2d(bottleneck_channel, 512, kernel_size=3, stride=2, padding=2, bias=False)
         self.b2 = nn.BatchNorm2d(512)
         # self.r2 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(512, 512, kernel_size=2, stride=1, padding=1, bias=False)
+        self.conv2 = nn.ConvTranspose2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False)
         self.b3 = nn.BatchNorm2d(512)
         # self.r3 = nn.ReLU(inplace=True)
-        self.conv3 = nn.Conv2d(512, 512, kernel_size=2, stride=1, bias=False)
+        self.conv3 = nn.ConvTranspose2d(512, 512, kernel_size=2, stride=1, bias=False)
         self.b4 = nn.BatchNorm2d(512)
         # self.r4 = nn.ReLU(inplace=True)
-        self.conv4 = nn.Conv2d(512, 256, kernel_size=2, stride=1, bias=False)
-        self.ap1 = nn.AvgPool2d(kernel_size=2, stride=1)
+        self.conv4 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=1, bias=False)
+        self.ap1 = nn.AvgPool2d(kernel_size=2, stride=1, padding=1)
 
     def forward(self, x):
         x = self.b1(x)
@@ -139,26 +139,35 @@ class ResNetHead(torch.nn.Module):
 ###################################################################
 
 class ResNetTail(torch.nn.Module):
-    def __init__(self, block, layers):
+    def __init__(self, block, layers, num_classes):
         super(ResNetTail, self).__init__()
         self.inplanes = 64
         self.decoder = decoder()
-        self.layer2 = self._make_layer(block, 256, layers[2], stride = 2)
-        self.layer3 = self._make_layer(block, 512, layers[3], stride = 2)
+        self.layer2  = self._make_layer(block, 128, layers[2], stride = 2)
+        self.layer3  = self._make_layer(block, 256, layers[3], stride = 2)
+        self.layer4  = self._make_layer(block, 512, layers[2], stride = 2)
+        self.avgpool = nn.AvgPool2d(7, stride=1)
+        self.fc      = nn.Linear(512, num_classes)
 
         # for computing loss in 1st round of training
         self.x      = None
-        self.l2_out = None 
+        self.l2_out = None
         self.l3_out = None
+        self.l4_out = None
 
     def forward(self, x):
         # print("tail start x", x.shape)                 # torch.Size([200, 12, 15, 15])
         self.x = self.decoder(x)
-        print("tail after decoder", self.x.shape)        # torch.Size([200, 64, 14, 14])
+        print("\ntail after decoder", self.x.shape)        # torch.Size([200, 64, 14, 14])
         self.l2_out = self.layer2(self.x)
         print("tail after L2", self.l2_out.shape)        # torch.Size([200, 512, 7, 7])
         self.l3_out = self.layer3(self.l2_out)
         print("tail after L3", self.l3_out.shape)        # torch.Size([200, 1024, 4, 4])
+        self.l4_out = self.layer4(self.l3_out)
+        print("tail after L4", self.l4_out.shape)        # torch.Size([200, 1024, 4, 4])
+        
+        x = self.avgpool(self.l4_out)
+        x = self.fc(x)
         return x
     
     def _make_layer(self, block, planes, blocks, stride=1):

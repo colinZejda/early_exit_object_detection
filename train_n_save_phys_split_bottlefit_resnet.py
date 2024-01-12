@@ -13,33 +13,34 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 
-from custom_wrapper import ResNet50Custom
+from pretrained_teacher import TeacherResNet
 from proper_imagenet_dataloaders import data_transforms, dataset, data_loader
 from resnet50 import ResNet, ResidualBlock50
 from split_resnet50 import ResNetHead, ResNetTail
 
+BATCH_SIZE = 100
 
 # train student head + encoder/decoder, freeze tail
 def first_round_training(device, train_loader, valid_loader):
     # setting hyperparams
+    num_classes = 1000
     num_epochs = 100
-    batch_size = 200
+    batch_size = BATCH_SIZE
     learning_rate = 1e-3
 
     # set up teacher and student models (resnet50)
     # teacher_path = '/home/ian/colin_early_exit_dec2023/early_exit_object_detection/original_resnet50_epoch50.pth'          # model+architecture, no need to instantiate the class ResNet
     # teacher_model = ResNet(ResidualBlock50, [3, 4, 6, 3]).to(device)
     # teacher = teacher_model.load_state_dict(torch.load(teacher_path))
-    teacher = models.resnet50(pretrained=True).to(device)
-    teacher_layer_outputs = ResNet50Custom().to(device)
+    teacher = TeacherResNet().to(device)
 
     student_head = ResNetHead().to(device)
-    student_tail = ResNetTail(ResidualBlock50, [3, 4, 6, 3]).to(device)
+    student_tail = ResNetTail(ResidualBlock50, [3, 4, 6, 3], num_classes=num_classes).to(device)
 
     # copy weights over (these will be frozen in student)
-    x = teacher.layer2
     student_tail.layer2 = teacher.layer2
     student_tail.layer3 = teacher.layer3
+    student_tail.layer4 = teacher.layer4
     student_tail.fc = teacher.fc
 
     # params for optimizer when training (just head + decoder, tail frozen)
@@ -65,13 +66,13 @@ def first_round_training(device, train_loader, valid_loader):
             student_out = student_tail(student_out)
             with torch.no_grad():
                 teacher_out = teacher(images)
-                T_l1_out, T_l2_out, T_l3_out = teacher_layer_outputs(images)
 
             # calculate loss
             
-            loss = loss_fn(student_tail.x, T_l1_out)                  # primary loss (remember, loss of outputs), x = student out of decoder, l1 = teacher out of layer1 
-            loss =  loss_fn(student_tail.l2_out, T_l2_out)            # l2 and l3 just help
-            loss += loss_fn(student_tail.l3_out, T_l3_out)
+            loss  = loss_fn(student_tail.decoder_out, teacher.l1_out)                  # primary loss (remember, loss of outputs), x = student out of decoder, l1 = teacher out of layer1 
+            loss  = loss_fn(student_tail.l2_out, teacher.l2_out)            # l2 and l3 just help
+            loss += loss_fn(student_tail.l3_out, teacher.l3_out)
+            loss += loss_fn(student_tail.l4_out, teacher.l4_out)
             loss_acumm = loss.item()
 
             # backprop
@@ -122,6 +123,7 @@ def first_round_training(device, train_loader, valid_loader):
 def second_round_training(device, train_loader, valid_loader):
 
     # setting hyperparams
+    num_classes = 1000
     num_epochs = 100
     batch_size = 200
     learning_rate = 1e-3
@@ -132,7 +134,7 @@ def second_round_training(device, train_loader, valid_loader):
 
     # instantiate student head + tail
     student_head = ResNetHead().to(device)
-    student_tail = ResNetTail(ResidualBlock50, [3, 4, 6, 3]).to(device)
+    student_tail = ResNetTail(ResidualBlock50, [3, 4, 6, 3], num_classes=num_classes).to(device)
 
     # load state dicts
     student_head.load_state_dict(torch.load(first_stage_done_head_path))
@@ -216,10 +218,10 @@ def main():
     path_to_imagenet = "/home/ian/dataset/1Per"                              # using 1Per for the moment for testing 
     train_transforms, val_transforms = data_transforms('imagenet1k_basic')   # unsure about 1k basic?
     train_set, val_set = dataset(False, train_transforms, val_transforms, path_to_imagenet)
-    train_loader, val_loader = data_loader(False, train_set, val_set, 200)   # 200 batch size
+    train_loader, val_loader = data_loader(False, train_set, val_set, BATCH_SIZE)
 
     # setting CUDA, allowed to use GPU0
-    gpu_id = 2
+    gpu_id = 0
     device = f'cuda:{gpu_id}'
 
     # perform training
