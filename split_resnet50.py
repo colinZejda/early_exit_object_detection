@@ -126,7 +126,7 @@ class ResNetHead(torch.nn.Module):
                         torch.nn.ReLU())
         self.encoder = encoder()
         self.mp = torch.nn.MaxPool2d(kernel_size = 3, stride = 2, padding = 1)
-        
+
     def forward(self, x):
         x = self.conv1(x)
         # print("head after conv1", x.shape)   # torch.Size([200, 64, 112, 112])  --> batched, channels, height, we
@@ -150,23 +150,24 @@ class ResNetTail(torch.nn.Module):
         self.fc      = nn.Linear(512, num_classes)
 
         # for computing loss in 1st round of training
-        self.x      = None
-        self.l2_out = None
-        self.l3_out = None
-        self.l4_out = None
+        self.decoder_out = None
+        self.l2_out      = None
+        self.l3_out      = None
+        self.l4_out      = None
 
     def forward(self, x):
         # print("tail start x", x.shape)                 # torch.Size([200, 12, 15, 15])
-        self.x = self.decoder(x)
-        print("\ntail after decoder", self.x.shape)        # torch.Size([200, 64, 14, 14])
-        self.l2_out = self.layer2(self.x)
-        print("tail after L2", self.l2_out.shape)        # torch.Size([200, 512, 7, 7])
+        self.decoder_out = self.decoder(x)
+        # print("\ntail after decoder", self.decoder_out.shape)      # torch.Size([200, 64, 14, 14])
+        self.l2_out = self.layer2(self.decoder_out)
+        # print("tail after L2", self.l2_out.shape)        # torch.Size([200, 512, 7, 7])
         self.l3_out = self.layer3(self.l2_out)
-        print("tail after L3", self.l3_out.shape)        # torch.Size([200, 1024, 4, 4])
+        # print("tail after L3", self.l3_out.shape)        # torch.Size([200, 1024, 4, 4])
         self.l4_out = self.layer4(self.l3_out)
-        print("tail after L4", self.l4_out.shape)        # torch.Size([200, 1024, 4, 4])
+        # print("tail after L4", self.l4_out.shape)        # torch.Size([200, 1024, 4, 4])
         
         x = self.avgpool(self.l4_out)
+        x = x.view(x.size(0), -1)
         x = self.fc(x)
         return x
     

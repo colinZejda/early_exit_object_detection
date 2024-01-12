@@ -1,11 +1,16 @@
 import os
+import sys 
 import torch
 import torch.utils.data
 import torchvision
+import torchvision.ops as ops
+from torchvision import models, datasets#, tv_tensors
+from torchvision.transforms import v2
 from PIL import Image
 from pycocotools.coco import COCO
 
 from fasterRCNN import *
+from wrapper_FRCNN import *
 from utils import *
 
 class COCODataset(torch.utils.data.Dataset):
@@ -46,7 +51,7 @@ class COCODataset(torch.utils.data.Dataset):
             xmax = (xmin + coco_annotation[i]['bbox'][2]) * (img.size[0]/640)
             ymax = (ymin + coco_annotation[i]['bbox'][3]) * (img.size[1]/480)
             boxes.append([xmin, ymin, xmax, ymax])
-            labels.append((coco_annotation[i]["category_id"]+1))
+            labels.append((coco_annotation[i]["category_id"]))
 
         if len(boxes) == 0:
             boxes = torch.zeros(100,4)
@@ -87,90 +92,220 @@ class COCODataset(torch.utils.data.Dataset):
 
 def get_transform():
     custom_transforms = []
-    custom_transforms.append(torchvision.transforms.ToTensor())
+    custom_transforms.append(torchvision.transforms.PILToTensor())
     custom_transforms.append(torchvision.transforms.Resize((640,480)))
     return torchvision.transforms.Compose(custom_transforms)
 
+transforms = v2.Compose(
+    [
+        v2.ToImage(),
+        v2.Resize((640,480)),
+        #v2.RandomPhotometricDistort(p=1),
+        #v2.RandomZoomOut(fill={tv_tensors.Image: (123, 117, 104), "others": 0}),
+        # v2.RandomIoUCrop(),
+        #v2.RandomHorizontalFlip(p=1),
+        # v2.SanitizeBoundingBoxes(),
+        v2.ToDtype(torch.float32, scale=True),
+    ]
+)
 
 # path to your own data and coco file
 train_data_dir = '../../dataset/COCO/train2017'
 train_coco = '../../dataset/COCO/annotations/instances_train2017.json'
 train_coco_captions = '../../dataset/COCO/annotations/captions_train2017.json'
 
+val_data_dir = '../../dataset/COCO/val2017'
+val_coco = '../../dataset/COCO/annotations/instances_val2017.json'
+
 # create own Dataset
-coco_dataset = COCODataset(root=train_data_dir,
-                          annotation=train_coco,
-                          transforms=get_transform()
+# coco_dataset = COCODataset(root=train_data_dir,
+#                           annotation=train_coco,
+#                           transforms=get_transform()
+#                           )
+
+# val_coco_dataset = COCODataset(root=val_data_dir,
+#                           annotation=val_coco,
+#                           transforms=get_transform()
+#                           )
+
+coco_dataset = datasets.CocoDetection(root=train_data_dir,
+                          annFile=train_coco,
+                        #   transforms=get_transform()
+                          transforms = transforms
                           )
 
-# coco_dataset = torchvision.datasets.CocoDetection(root=train_data_dir, annFile=train_coco)
+val_coco_dataset = datasets.CocoDetection(root=val_data_dir,
+                          annFile=val_coco,
+                        #   transforms=get_transform()
+                          transforms = transforms
+                          )
+
+coco_dataset = datasets.wrap_dataset_for_transforms_v2(coco_dataset, target_keys=("boxes", "labels"))
+val_coco_dataset = datasets.wrap_dataset_for_transforms_v2(val_coco_dataset, target_keys=("boxes", "labels"))
 
 # collate_fn needs for batch
 def collate_fn(batch):
     return tuple(zip(*batch))
 
 # Batch size
-train_batch_size = 15
+train_batch_size = 10
+accum = 4
 
 # own DataLoader
 data_loader = torch.utils.data.DataLoader(coco_dataset,
                                           batch_size=train_batch_size,
+                                          collate_fn = collate_fn,
                                           shuffle=True,
                                           num_workers=4)
 
-# print(next(iter(data_loader)))
+val_loader = torch.utils.data.DataLoader(val_coco_dataset,
+                                          batch_size=train_batch_size,
+                                          collate_fn = collate_fn,
+                                          shuffle=True,
+                                          num_workers=4)
+
+# (image, anno) = next(iter(data_loader))
+# # print(len(image), image[0].shape)
+# print(anno)
 
 
-device = torch.device('cuda:2') #torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+device = torch.device('cuda:1') #torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-detector = TwoStageDetector((640, 480), (15, 20), 2048, 250, (2,2)).to(device)
+#detector = TwoStageDetector((640, 480), (15, 20), 2048, 100, (2,2)).to(device)
+# detector.load_state_dict(torch.load('FRCNN_model.pth',map_location=device))
+detector = FRCNN_wrapper(transforms).to(device)
 
-print(detector)
+for name, param in detector.named_parameters():
+    if param.requires_grad:
+        print(name)#, param.data)
+# print(detector)
 
 # for imgs, annotations in data_loader:
 #     imgs = list(img.to(device) for img in imgs)
 #     annotations = [{k: v.to(device) for k, v in t.items()} for t in annotations]
 #     print(annotations)
 
-def training_loop(model, learning_rate, train_dataloader, n_epochs):
+def training_loop(model, learning_rate, train_dataloader, n_epochs, val_loader, batch_size):
     
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     model.train()
     loss_list = []
     
-    for i in tqdm(range(n_epochs)):
+    for epoch in range(n_epochs):#tqdm(range(n_epochs)):
+        batch_loss = 0
         total_loss = 0
         i = 0
-        for imgs, annotations in tqdm(train_dataloader):
+        accum_counter = 1
+        printed = False
+        print('=== Training epoch: ', epoch, '===')
+        for data in train_dataloader: #tqdm(train_dataloader):
             
             # print(imgs.shape)
             # print(annotations["boxes"].shape)
             # print('LABELS!:',annotations["labels"].shape)
 
+            images = list(image.to(device) for image in data[0])
+            targets = [{k: v.to(device) for k, v in t.items()} for t in data[1]]
+
             # forward pass
-            loss = model(imgs.to(device), annotations["boxes"].to(device), annotations["labels"].to(device))
-            
+            loss = model(images, targets)
+            batch_loss += loss['loss_classifier'] + loss['loss_box_reg']
+
             if loss != -9999:
                 # backpropagation
-                loss.backward()
-                optimizer.step()
+                batch_loss.backward()
+                total_loss += batch_loss.item()/accum
+                batch_loss = 0
+
                 
-                total_loss += loss.item()
+                if accum_counter == accum:
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    accum_counter = 1
+                    i+=1
+                    printed = False
+                else:
+                    accum_counter += 1
 
-                optimizer.zero_grad()
+                if i != 0 and i%125 == 0 and printed == False:
+                    print('loss:', total_loss/(i+1))
+                    sys.stdout.flush()
+                    printed = True
 
-                if i != 0 and i%500 == 0:
-                    print(total_loss/(i+1))
-
-                i+= 1
+                #i+= 1
         
         loss_list.append(total_loss/(i+1))
+
+        torch.save(model.state_dict(), 'FRCNN_model-2.pth')
+        print('Total Loss:', total_loss/(i+1))
+        # model.eval()
+
+        # TP = 0
+        # FP = 0
+        # FN = 0
+        # IOU = 0
+        # print('=== Validation epoch: ', epoch, '===')
+        # for imgs, annotations in val_loader:#tqdm(val_loader):
+        #     proposals_final, conf_scores_final, classes_final = model.inference(imgs.to(device))
+        #     annotations['labels'] = annotations['labels'].to(device)
+        #     annotations['boxes'] = annotations['boxes'].to(device)
+
+            
+
+        #     no_IOU = False
+        #     # IOU_holder = 0
+        #     for index in range(len(classes_final)):
+        #         # print('class:',classes_final[index])
+        #         # print('gt_class', annotations["labels"][index])
+        #         # print('conf',conf_scores_final[index])
+
+        #         # print(classes_final[index].shape)
+        #         # print(proposals_final[index].shape)
+        #         # print(annotations["labels"][index].shape)
+        #         # print(annotations["boxes"][index].shape)
+        #         model_instances = classes_final[index].shape[0]
+        #         gt_instances = annotations["labels"][index].shape[0]
+        #         max_instances = max(model_instances, gt_instances)
+
+        #         # IOU_holder = ops.box_iou(proposals_final[index], annotations['boxes'][index])
+        #         # print(IOU_holder)
+
+        #         for instance in range(max_instances):
+        #             if instance >= model_instances:
+        #                 FN += 1 if annotations["labels"][index][instance] != 0 else 0 
+        #                 no_IOU = True
+        #             elif instance >= gt_instances:
+        #                 FP += 1 if classes_final[index][instance] != 0 else 0
+        #                 no_IOU = True
+        #             elif classes_final[index][instance] == annotations["labels"][index][instance] and annotations["labels"][index][instance] != -1 and classes_final[index][instance] != -1:
+        #                 TP += 1
+        #             elif classes_final[index][instance] != annotations["labels"][index][instance] and classes_final[index][instance] == -1:
+        #                 FN += 1
+        #                 no_IOU = True
+        #             elif classes_final[index][instance] != annotations["labels"][index][instance]:
+        #                 FP += 1
+
+        #             # if no_IOU:
+        #             #     no_IOU = False
+        #             #     IOU_holder = 0
+        #             # else:
+        #             #     IOU_holder = ops.box_iou(proposals_final[index][instance], annotations['boxes'][index][instance]).item()
+                    
+        #             # IOU += IOU_holder
+
+        # prec = (TP)/(TP+FP)
+        # recall = (TP)/(TP+FN)
+        # print(prec)
+        # print(recall)
+        # print(TP, '--', FP, '--', FN)
+        # sys.stdout.flush()
+
         
     return loss_list
 
 learning_rate = 1e-3
-n_epochs = 5
+n_epochs = 100
 
-loss_list = training_loop(detector, learning_rate, data_loader, n_epochs)
+loss_list = training_loop(detector, learning_rate, data_loader, n_epochs, val_loader, train_batch_size)
 

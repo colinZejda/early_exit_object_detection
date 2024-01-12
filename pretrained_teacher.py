@@ -36,9 +36,9 @@ class TeacherResNet(nn.Module):
         self.l1_out = self.layer1(x)
         self.l2_out = self.layer2(self.l1_out)
         self.l3_out = self.layer3(self.l2_out)
-        x           = self.layer4(self.l3_out)
+        self.l4_out = self.layer4(self.l3_out)
 
-        x = self.avgpool(x)
+        x = self.avgpool(self.l4_out)
         x = torch.flatten(x, 1)
         x = self.fc(x)
         return x

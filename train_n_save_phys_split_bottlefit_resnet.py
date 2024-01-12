@@ -18,7 +18,7 @@ from proper_imagenet_dataloaders import data_transforms, dataset, data_loader
 from resnet50 import ResNet, ResidualBlock50
 from split_resnet50 import ResNetHead, ResNetTail
 
-BATCH_SIZE = 100
+BATCH_SIZE = 50
 
 # train student head + encoder/decoder, freeze tail
 def first_round_training(device, train_loader, valid_loader):
